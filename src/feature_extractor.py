@@ -7,7 +7,7 @@ class FeatureExtractor(ast.NodeVisitor):
         self.reset_counters()
 
     def reset_counters(self):
-        # Existing features
+        # Features 1–10: Basic AST metrics
         self.function_count = 0
         self.class_count = 0
         self.if_count = 0
@@ -25,8 +25,24 @@ class FeatureExtractor(ast.NodeVisitor):
         # Feature 12: Cyclomatic complexity
         self.cyclomatic_complexity = 1
 
-        # Features 13 and 14: Function length
+        # Features 13–14: Function lengths
         self.function_lengths = []
+
+        # Features 15–16: Function parameters
+        self.total_parameter_count = 0
+        self.max_parameters = 0
+
+        # Feature 17: Boolean operators
+        self.boolean_operator_count = 0
+
+        # Feature 18: Comparison operators
+        self.comparison_operator_count = 0
+
+        # Feature 19: Bare except handlers
+        self.bare_except_count = 0
+
+        # Feature 20: Global statements
+        self.global_statement_count = 0
 
     # ----------------------------------
     # Functions and classes
@@ -34,22 +50,36 @@ class FeatureExtractor(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node):
         self.function_count += 1
-        self.record_function_length(node)
+        self.record_function_metrics(node)
         self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node):
         self.function_count += 1
-        self.record_function_length(node)
+        self.record_function_metrics(node)
         self.generic_visit(node)
 
-    def record_function_length(self, node):
-        """Record physical line span for a function."""
-        start_line = node.lineno
-        end_line = node.end_lineno
-
-        if end_line is not None:
-            length = end_line - start_line + 1
+    def record_function_metrics(self, node):
+        # Function length: physical line span from def to final line.
+        if node.end_lineno is not None:
+            length = node.end_lineno - node.lineno + 1
             self.function_lengths.append(length)
+
+        # Count positional, keyword-only, *args, and **kwargs.
+        args = node.args
+
+        parameter_count = (
+            len(args.posonlyargs)
+            + len(args.args)
+            + len(args.kwonlyargs)
+            + (1 if args.vararg else 0)
+            + (1 if args.kwarg else 0)
+        )
+
+        self.total_parameter_count += parameter_count
+        self.max_parameters = max(
+            self.max_parameters,
+            parameter_count
+        )
 
     def visit_ClassDef(self, node):
         self.class_count += 1
@@ -75,7 +105,7 @@ class FeatureExtractor(ast.NodeVisitor):
                 self.visit(statement)
 
     def visit_elif(self, node):
-        """Count an elif branch without treating it as deeper nesting."""
+        # An elif branch is not an additional nesting level.
         self.if_count += 1
         self.cyclomatic_complexity += 1
 
@@ -124,6 +154,10 @@ class FeatureExtractor(ast.NodeVisitor):
     def visit_ExceptHandler(self, node):
         self.except_count += 1
         self.cyclomatic_complexity += 1
+
+        if node.type is None:
+            self.bare_except_count += 1
+
         self.generic_visit(node)
 
     # ----------------------------------
@@ -157,9 +191,179 @@ class FeatureExtractor(ast.NodeVisitor):
     # ----------------------------------
 
     def visit_BoolOp(self, node):
+        self.boolean_operator_count += len(node.values) - 1
+
+        # Each additional Boolean operator adds a decision point.
         self.cyclomatic_complexity += len(node.values) - 1
+
         self.generic_visit(node)
 
     # ----------------------------------
-    # Nes
+    # Comparison operators
+    # ----------------------------------
+
+    def visit_Compare(self, node):
+        self.comparison_operator_count += len(node.ops)
+        self.generic_visit(node)
+
+    # ----------------------------------
+    # Global statements
+    # ----------------------------------
+
+    def visit_Global(self, node):
+        # Count each global declaration statement.
+        self.global_statement_count += 1
+        self.generic_visit(node)
+
+    # ----------------------------------
+    # Conditional expressions
+    # ----------------------------------
+
+    def visit_IfExp(self, node):
+        # Example: result = "yes" if condition else "no"
+        self.cyclomatic_complexity += 1
+        self.generic_visit(node)
+
+    # ----------------------------------
+    # Nesting-depth calculation
+    # ----------------------------------
+
+    def visit_nested(self, node):
+        self.current_depth += 1
+
+        self.max_depth = max(
+            self.max_depth,
+            self.current_depth
+        )
+
+        self.generic_visit(node)
+
+        self.current_depth -= 1
+
+    # ----------------------------------
+    # Feature extraction
+    # ----------------------------------
+
+    def extract(self, code):
+        self.reset_counters()
+
+        # Feature 1: Nonblank physical lines.
+        loc = sum(
+            1 for line in code.splitlines()
+            if line.strip()
+        )
+
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as error:
+            return {
+                "error": "Invalid Python syntax",
+                "message": error.msg,
+                "line": error.lineno,
+                "loc": loc,
+            }
+
+        self.visit(tree)
+
+        average_function_length = (
+            sum(self.function_lengths) / len(self.function_lengths)
+            if self.function_lengths
+            else 0
+        )
+
+        maximum_function_length = (
+            max(self.function_lengths)
+            if self.function_lengths
+            else 0
+        )
+
+        return {
+            # Features 1–10
+            "loc": loc,
+            "function_count": self.function_count,
+            "class_count": self.class_count,
+            "if_count": self.if_count,
+            "for_count": self.for_count,
+            "while_count": self.while_count,
+            "try_count": self.try_count,
+            "except_count": self.except_count,
+            "import_count": self.import_count,
+            "return_count": self.return_count,
+
+            # Feature 11
+            "max_nesting_depth": self.max_depth,
+
+            # Feature 12
+            "cyclomatic_complexity": self.cyclomatic_complexity,
+
+            # Features 13–14
+            "average_function_length": average_function_length,
+            "maximum_function_length": maximum_function_length,
+
+            # Features 15–16
+            "total_parameter_count": self.total_parameter_count,
+            "max_parameters": self.max_parameters,
+
+            # Feature 17
+            "boolean_operator_count": self.boolean_operator_count,
+
+            # Feature 18
+            "comparison_operator_count": self.comparison_operator_count,
+
+            # Feature 19
+            "bare_except_count": self.bare_except_count,
+
+            # Feature 20
+            "global_statement_count": self.global_statement_count,
+        }
+
+
+# ----------------------------------
+# Basic tests
+# ----------------------------------
+
+if __name__ == "__main__":
+
+    extractor = FeatureExtractor()
+
+    test_code = """
+import os
+
+global_value = 10
+
+def example(x, y, *args, **kwargs):
+    global global_value
+
+    try:
+        if x > 0 and y < 10:
+            for item in args:
+                print(item)
+    except:
+        return None
+
+    result = "positive" if x > 0 else "non-positive"
+    return result
+"""
+
+    features = extractor.extract(test_code)
+
+    print("Extracted Features:")
+    for name, value in features.items():
+        print(f"{name}: {value}")
+
+    # Basic assertions for selected features.
+    assert features["function_count"] == 1
+    assert features["class_count"] == 0
+    assert features["if_count"] == 1
+    assert features["for_count"] == 1
+    assert features["try_count"] == 1
+    assert features["except_count"] == 1
+    assert features["bare_except_count"] == 1
+    assert features["total_parameter_count"] == 4
+    assert features["max_parameters"] == 4
+    assert features["boolean_operator_count"] == 1
+    assert features["comparison_operator_count"] == 3
+    assert features["global_statement_count"] == 1
+
+    print("\nSelected feature tests passed!")
 
