@@ -1,4 +1,3 @@
-
 import ast
 
 
@@ -8,6 +7,7 @@ class FeatureExtractor(ast.NodeVisitor):
         self.reset_counters()
 
     def reset_counters(self):
+        # Existing features
         self.function_count = 0
         self.class_count = 0
         self.if_count = 0
@@ -18,23 +18,38 @@ class FeatureExtractor(ast.NodeVisitor):
         self.import_count = 0
         self.return_count = 0
 
+        # Feature 11: Maximum nesting depth
         self.current_depth = 0
         self.max_depth = 0
 
-        # Cyclomatic complexity starts at one basic path.
+        # Feature 12: Cyclomatic complexity
         self.cyclomatic_complexity = 1
 
+        # Features 13 and 14: Function length
+        self.function_lengths = []
+
     # ----------------------------------
-    # Function and class counting
+    # Functions and classes
     # ----------------------------------
 
     def visit_FunctionDef(self, node):
         self.function_count += 1
+        self.record_function_length(node)
         self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node):
         self.function_count += 1
+        self.record_function_length(node)
         self.generic_visit(node)
+
+    def record_function_length(self, node):
+        """Record physical line span for a function."""
+        start_line = node.lineno
+        end_line = node.end_lineno
+
+        if end_line is not None:
+            length = end_line - start_line + 1
+            self.function_lengths.append(length)
 
     def visit_ClassDef(self, node):
         self.class_count += 1
@@ -53,7 +68,6 @@ class FeatureExtractor(ast.NodeVisitor):
         for statement in node.body:
             self.visit(statement)
 
-        # An elif is represented as an If inside orelse.
         for statement in node.orelse:
             if isinstance(statement, ast.If):
                 self.visit_elif(statement)
@@ -61,7 +75,7 @@ class FeatureExtractor(ast.NodeVisitor):
                 self.visit(statement)
 
     def visit_elif(self, node):
-        """Visit an elif branch without increasing nesting depth."""
+        """Count an elif branch without treating it as deeper nesting."""
         self.if_count += 1
         self.cyclomatic_complexity += 1
 
@@ -104,7 +118,6 @@ class FeatureExtractor(ast.NodeVisitor):
         self.visit_nested(node)
 
     def visit_TryStar(self, node):
-        # Handles try/except* in Python 3.11+.
         self.try_count += 1
         self.visit_nested(node)
 
@@ -144,6 +157,9 @@ class FeatureExtractor(ast.NodeVisitor):
     # ----------------------------------
 
     def visit_BoolOp(self, node):
-        # a and b and c contributes two decision points.
         self.cyclomatic_complexity += len(node.values) - 1
+        self.generic_visit(node)
+
+    # ----------------------------------
+    # Nes
 
