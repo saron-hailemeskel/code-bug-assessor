@@ -45,7 +45,19 @@ class FeatureExtractor(ast.NodeVisitor):
         self.import_count = 0
         self.return_count = 0
 
+        # Nesting-depth tracking
+        self.current_depth = 0
+        self.max_depth = 0
+
+    # ----------------------------------
+    # AST visitor methods for counting
+    # ----------------------------------
+
     def visit_FunctionDef(self, node):
+        self.function_count += 1
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node):
         self.function_count += 1
         self.generic_visit(node)
 
@@ -55,19 +67,63 @@ class FeatureExtractor(ast.NodeVisitor):
 
     def visit_If(self, node):
         self.if_count += 1
-        self.generic_visit(node)
+
+        # Visit the condition.
+        self.visit(node.test)
+
+        # Visit the body at the current nesting depth.
+        for statement in node.body:
+            self.visit(statement)
+
+        # An elif is represented as an If inside orelse.
+        # Visit elif branches without increasing nesting depth.
+        for statement in node.orelse:
+            if isinstance(statement, ast.If):
+                self.visit_elif(statement)
+            else:
+                self.visit(statement)
+
+    def visit_elif(self, node):
+        """Count and visit an elif branch without adding nesting depth."""
+        self.if_count += 1
+
+        self.visit(node.test)
+
+        for statement in node.body:
+            self.visit(statement)
+
+        for statement in node.orelse:
+            if isinstance(statement, ast.If):
+                self.visit_elif(statement)
+            else:
+                self.visit(statement)
 
     def visit_For(self, node):
         self.for_count += 1
-        self.generic_visit(node)
+        self.visit_nested(node)
+
+    def visit_AsyncFor(self, node):
+        self.for_count += 1
+        self.visit_nested(node)
 
     def visit_While(self, node):
         self.while_count += 1
-        self.generic_visit(node)
+        self.visit_nested(node)
 
     def visit_Try(self, node):
         self.try_count += 1
-        self.generic_visit(node)
+        self.visit_nested(node)
+
+    def visit_TryStar(self, node):
+        # Handles try/except* statements in Python 3.11+.
+        self.try_count += 1
+        self.visit_nested(node)
+
+    def visit_With(self, node):
+        self.visit_nested(node)
+
+    def visit_AsyncWith(self, node):
+        self.visit_nested(node)
 
     def visit_ExceptHandler(self, node):
         self.except_count += 1
@@ -85,18 +141,42 @@ class FeatureExtractor(ast.NodeVisitor):
         self.return_count += 1
         self.generic_visit(node)
 
+    # ----------------------------------
+    # Nesting-depth calculation
+    # ----------------------------------
+
+    def visit_nested(self, node):
+        """Track the maximum nesting depth of supported structures."""
+
+        self.current_depth += 1
+
+        self.max_depth = max(
+            self.max_depth,
+            self.current_depth
+        )
+
+        self.generic_visit(node)
+
+        self.current_depth -= 1
+
+    # ----------------------------------
+    # Feature extraction
+    # ----------------------------------
+
     def extract(self, code):
         self.reset_counters()
 
         # Count nonblank physical lines.
         loc = sum(
-            1 for line in code.splitlines()
+            1
+            for line in code.splitlines()
             if line.strip()
         )
 
-        # Parse the source code safely.
+        # Parse source code safely.
         try:
             tree = ast.parse(code)
+
         except SyntaxError as error:
             return {
                 "error": "Invalid Python syntax",
@@ -105,10 +185,10 @@ class FeatureExtractor(ast.NodeVisitor):
                 "loc": loc,
             }
 
-        # Visit the AST nodes.
+        # Visit AST nodes and calculate features.
         self.visit(tree)
 
-        # Return the extracted features.
+        # Return extracted features.
         return {
             "loc": loc,
             "function_count": self.function_count,
@@ -117,20 +197,4 @@ class FeatureExtractor(ast.NodeVisitor):
             "for_count": self.for_count,
             "while_count": self.while_count,
             "try_count": self.try_count,
-            "except_count": self.except_count,
-            "import_count": self.import_count,
-            "return_count": self.return_count,
         }
-
-if __name__ == "__main__":
-    extractor = FeatureExtractor()
-
-    invalid_code = """
-def greet(
-    print("Hello")
-"""
-
-    features = extractor.extract(invalid_code)
-
-    print("Extracted Features:")
-    print(features)
