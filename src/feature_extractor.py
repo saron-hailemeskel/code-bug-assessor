@@ -2,33 +2,6 @@
 import ast
 
 
-code = """
-import json
-from pathlib import Path
-
-
-class Calculator:
-
-    def add(self, x, y):
-        if x > 0:
-            return x + y
-
-        return x + y
-
-
-def process(items):
-    try:
-        for item in items:
-            print(item)
-            return item
-    except ValueError:
-        return None
-
-    while False:
-        print("running")
-"""
-
-
 class FeatureExtractor(ast.NodeVisitor):
 
     def __init__(self):
@@ -45,12 +18,14 @@ class FeatureExtractor(ast.NodeVisitor):
         self.import_count = 0
         self.return_count = 0
 
-        # Nesting-depth tracking
         self.current_depth = 0
         self.max_depth = 0
 
+        # Cyclomatic complexity starts at one basic path.
+        self.cyclomatic_complexity = 1
+
     # ----------------------------------
-    # AST visitor methods for counting
+    # Function and class counting
     # ----------------------------------
 
     def visit_FunctionDef(self, node):
@@ -65,18 +40,20 @@ class FeatureExtractor(ast.NodeVisitor):
         self.class_count += 1
         self.generic_visit(node)
 
+    # ----------------------------------
+    # Conditional statements
+    # ----------------------------------
+
     def visit_If(self, node):
         self.if_count += 1
+        self.cyclomatic_complexity += 1
 
-        # Visit the condition.
         self.visit(node.test)
 
-        # Visit the body at the current nesting depth.
         for statement in node.body:
             self.visit(statement)
 
         # An elif is represented as an If inside orelse.
-        # Visit elif branches without increasing nesting depth.
         for statement in node.orelse:
             if isinstance(statement, ast.If):
                 self.visit_elif(statement)
@@ -84,8 +61,9 @@ class FeatureExtractor(ast.NodeVisitor):
                 self.visit(statement)
 
     def visit_elif(self, node):
-        """Count and visit an elif branch without adding nesting depth."""
+        """Visit an elif branch without increasing nesting depth."""
         self.if_count += 1
+        self.cyclomatic_complexity += 1
 
         self.visit(node.test)
 
@@ -98,26 +76,46 @@ class FeatureExtractor(ast.NodeVisitor):
             else:
                 self.visit(statement)
 
+    # ----------------------------------
+    # Loops
+    # ----------------------------------
+
     def visit_For(self, node):
         self.for_count += 1
+        self.cyclomatic_complexity += 1
         self.visit_nested(node)
 
     def visit_AsyncFor(self, node):
         self.for_count += 1
+        self.cyclomatic_complexity += 1
         self.visit_nested(node)
 
     def visit_While(self, node):
         self.while_count += 1
+        self.cyclomatic_complexity += 1
         self.visit_nested(node)
+
+    # ----------------------------------
+    # Exception handling
+    # ----------------------------------
 
     def visit_Try(self, node):
         self.try_count += 1
         self.visit_nested(node)
 
     def visit_TryStar(self, node):
-        # Handles try/except* statements in Python 3.11+.
+        # Handles try/except* in Python 3.11+.
         self.try_count += 1
         self.visit_nested(node)
+
+    def visit_ExceptHandler(self, node):
+        self.except_count += 1
+        self.cyclomatic_complexity += 1
+        self.generic_visit(node)
+
+    # ----------------------------------
+    # Context managers
+    # ----------------------------------
 
     def visit_With(self, node):
         self.visit_nested(node)
@@ -125,9 +123,9 @@ class FeatureExtractor(ast.NodeVisitor):
     def visit_AsyncWith(self, node):
         self.visit_nested(node)
 
-    def visit_ExceptHandler(self, node):
-        self.except_count += 1
-        self.generic_visit(node)
+    # ----------------------------------
+    # Imports and returns
+    # ----------------------------------
 
     def visit_Import(self, node):
         self.import_count += 1
@@ -142,59 +140,10 @@ class FeatureExtractor(ast.NodeVisitor):
         self.generic_visit(node)
 
     # ----------------------------------
-    # Nesting-depth calculation
+    # Boolean operators
     # ----------------------------------
 
-    def visit_nested(self, node):
-        """Track the maximum nesting depth of supported structures."""
+    def visit_BoolOp(self, node):
+        # a and b and c contributes two decision points.
+        self.cyclomatic_complexity += len(node.values) - 1
 
-        self.current_depth += 1
-
-        self.max_depth = max(
-            self.max_depth,
-            self.current_depth
-        )
-
-        self.generic_visit(node)
-
-        self.current_depth -= 1
-
-    # ----------------------------------
-    # Feature extraction
-    # ----------------------------------
-
-    def extract(self, code):
-        self.reset_counters()
-
-        # Count nonblank physical lines.
-        loc = sum(
-            1
-            for line in code.splitlines()
-            if line.strip()
-        )
-
-        # Parse source code safely.
-        try:
-            tree = ast.parse(code)
-
-        except SyntaxError as error:
-            return {
-                "error": "Invalid Python syntax",
-                "message": error.msg,
-                "line": error.lineno,
-                "loc": loc,
-            }
-
-        # Visit AST nodes and calculate features.
-        self.visit(tree)
-
-        # Return extracted features.
-        return {
-            "loc": loc,
-            "function_count": self.function_count,
-            "class_count": self.class_count,
-            "if_count": self.if_count,
-            "for_count": self.for_count,
-            "while_count": self.while_count,
-            "try_count": self.try_count,
-        }
