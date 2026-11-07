@@ -1,0 +1,4 @@
+loc,function_count,class_count,if_count,for_count,while_count,try_count,except_count,import_count,return_count,max_nesting_depth,cyclomatic_complexity,average_function_length,maximum_function_length,total_parameter_count,max_parameters,boolean_operator_count,comparison_operator_count,bare_except_count,global_statement_count,label,source_file
+23,1,0,6,1,0,1,1,0,2,2,11,26.0,26,5,5,2,3,0,0,high,data\raw\high\complex_processor.py
+6,3,0,0,0,0,0,0,0,3,0,1,2.0,2,6,2,0,0,0,0,low,data\raw\low\simple_calculator.py
+10,1,0,2,1,0,0,0,0,1,1,4,12.0,12,1,1,0,2,0,0,medium,data\raw\medium\file_processor.py

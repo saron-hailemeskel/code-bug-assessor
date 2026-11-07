@@ -1,0 +1,175 @@
+[1mdiff --git a/src/feature_extractor.py b/src/feature_extractor.py[m
+[1mindex 6c5a437..6454637 100644[m
+[1m--- a/src/feature_extractor.py[m
+[1m+++ b/src/feature_extractor.py[m
+[36m@@ -45,29 +45,85 @@[m [mclass FeatureExtractor(ast.NodeVisitor):[m
+         self.import_count = 0[m
+         self.return_count = 0[m
+ [m
+[32m+[m[32m        # Nesting-depth tracking[m
+[32m+[m[32m        self.current_depth = 0[m
+[32m+[m[32m        self.max_depth = 0[m
+[32m+[m
+[32m+[m[32m    # ----------------------------------[m
+[32m+[m[32m    # AST visitor methods for counting[m
+[32m+[m[32m    # ----------------------------------[m
+[32m+[m
+     def visit_FunctionDef(self, node):[m
+         self.function_count += 1[m
+         self.generic_visit(node)[m
+ [m
+[32m+[m[32m    def visit_AsyncFunctionDef(self, node):[m
+[32m+[m[32m        self.function_count += 1[m
+[32m+[m[32m        self.generic_visit(node)[m
+[32m+[m
+     def visit_ClassDef(self, node):[m
+         self.class_count += 1[m
+         self.generic_visit(node)[m
+ [m
+     def visit_If(self, node):[m
+         self.if_count += 1[m
+[31m-        self.generic_visit(node)[m
+[32m+[m
+[32m+[m[32m        # Visit the condition.[m
+[32m+[m[32m        self.visit(node.test)[m
+[32m+[m
+[32m+[m[32m        # Visit the body at the current nesting depth.[m
+[32m+[m[32m        for statement in node.body:[m
+[32m+[m[32m            self.visit(statement)[m
+[32m+[m
+[32m+[m[32m        # An elif is represented as an If inside orelse.[m
+[32m+[m[32m        # Visit elif branches without increasing nesting depth.[m
+[32m+[m[32m        for statement in node.orelse:[m
+[32m+[m[32m            if isinstance(statement, ast.If):[m
+[32m+[m[32m                self.visit_elif(statement)[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                self.visit(statement)[m
+[32m+[m
+[32m+[m[32m    def visit_elif(self, node):[m
+[32m+[m[32m        """Count and visit an elif branch without adding nesting depth."""[m
+[32m+[m[32m        self.if_count += 1[m
+[32m+[m
+[32m+[m[32m        self.visit(node.test)[m
+[32m+[m
+[32m+[m[32m        for statement in node.body:[m
+[32m+[m[32m            self.visit(statement)[m
+[32m+[m
+[32m+[m[32m        for statement in node.orelse:[m
+[32m+[m[32m            if isinstance(statement, ast.If):[m
+[32m+[m[32m                self.visit_elif(statement)[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                self.visit(statement)[m
+ [m
+     def visit_For(self, node):[m
+         self.for_count += 1[m
+[31m-        self.generic_visit(node)[m
+[32m+[m[32m        self.visit_nested(node)[m
+[32m+[m
+[32m+[m[32m    def visit_AsyncFor(self, node):[m
+[32m+[m[32m        self.for_count += 1[m
+[32m+[m[32m        self.visit_nested(node)[m
+ [m
+     def visit_While(self, node):[m
+         self.while_count += 1[m
+[31m-        self.generic_visit(node)[m
+[32m+[m[32m        self.visit_nested(node)[m
+ [m
+     def visit_Try(self, node):[m
+         self.try_count += 1[m
+[31m-        self.generic_visit(node)[m
+[32m+[m[32m        self.visit_nested(node)[m
+[32m+[m
+[32m+[m[32m    def visit_TryStar(self, node):[m
+[32m+[m[32m        # Handles try/except* statements in Python 3.11+.[m
+[32m+[m[32m        self.try_count += 1[m
+[32m+[m[32m        self.visit_nested(node)[m
+[32m+[m
+[32m+[m[32m    def visit_With(self, node):[m
+[32m+[m[32m        self.visit_nested(node)[m
+[32m+[m
+[32m+[m[32m    def visit_AsyncWith(self, node):[m
+[32m+[m[32m        self.visit_nested(node)[m
+ [m
+     def visit_ExceptHandler(self, node):[m
+         self.except_count += 1[m
+[36m@@ -85,18 +141,42 @@[m [mclass FeatureExtractor(ast.NodeVisitor):[m
+         self.return_count += 1[m
+         self.generic_visit(node)[m
+ [m
+[32m+[m[32m    # ----------------------------------[m
+[32m+[m[32m    # Nesting-depth calculation[m
+[32m+[m[32m    # ----------------------------------[m
+[32m+[m
+[32m+[m[32m    def visit_nested(self, node):[m
+[32m+[m[32m        """Track the maximum nesting depth of supported structures."""[m
+[32m+[m
+[32m+[m[32m        self.current_depth += 1[m
+[32m+[m
+[32m+[m[32m        self.max_depth = max([m
+[32m+[m[32m            self.max_depth,[m
+[32m+[m[32m            self.current_depth[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        self.generic_visit(node)[m
+[32m+[m
+[32m+[m[32m        self.current_depth -= 1[m
+[32m+[m
+[32m+[m[32m    # ----------------------------------[m
+[32m+[m[32m    # Feature extraction[m
+[32m+[m[32m    # ----------------------------------[m
+[32m+[m
+     def extract(self, code):[m
+         self.reset_counters()[m
+ [m
+         # Count nonblank physical lines.[m
+         loc = sum([m
+[31m-            1 for line in code.splitlines()[m
+[32m+[m[32m            1[m
+[32m+[m[32m            for line in code.splitlines()[m
+             if line.strip()[m
+         )[m
+ [m
+[31m-        # Parse the source code safely.[m
+[32m+[m[32m        # Parse source code safely.[m
+         try:[m
+             tree = ast.parse(code)[m
+[32m+[m
+         except SyntaxError as error:[m
+             return {[m
+                 "error": "Invalid Python syntax",[m
+[36m@@ -105,10 +185,10 @@[m [mclass FeatureExtractor(ast.NodeVisitor):[m
+                 "loc": loc,[m
+             }[m
+ [m
+[31m-        # Visit the AST nodes.[m
+[32m+[m[32m        # Visit AST nodes and calculate features.[m
+         self.visit(tree)[m
+ [m
+[31m-        # Return the extracted features.[m
+[32m+[m[32m        # Return extracted features.[m
+         return {[m
+             "loc": loc,[m
+             "function_count": self.function_count,[m
+[36m@@ -117,20 +197,4 @@[m [mclass FeatureExtractor(ast.NodeVisitor):[m
+             "for_count": self.for_count,[m
+             "while_count": self.while_count,[m
+             "try_count": self.try_count,[m
+[31m-            "except_count": self.except_count,[m
+[31m-            "import_count": self.import_count,[m
+[31m-            "return_count": self.return_count,[m
+[31m-        }[m
+[31m-[m
+[31m-if __name__ == "__main__":[m
+[31m-    extractor = FeatureExtractor()[m
+[31m-[m
+[31m-    invalid_code = """[m
+[31m-def greet([m
+[31m-    print("Hello")[m
+[31m-"""[m
+[31m-[m
+[31m-    features = extractor.extract(invalid_code)[m
+[31m-[m
+[31m-    print("Extracted Features:")[m
+[31m-    print(features)[m
+[32m+[m[32m        }[m
+\ No newline at end of file[m
